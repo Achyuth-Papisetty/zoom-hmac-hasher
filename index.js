@@ -4,7 +4,7 @@ const crypto = require("crypto");
 const app = express();
 app.use(express.json());
 
-const SECRET = "6jz1quLZTSiONv6Uo8M0gA";   // your Zoom secret token
+const SECRET = "6jz1quLZTSiONv6Uo8M0gA";  // your Zoom secret token
 
 app.post("/hash", (req, res) => {
     try {
@@ -14,10 +14,11 @@ app.post("/hash", (req, res) => {
             return res.status(400).json({ error: "Missing plainToken" });
         }
 
+        // MUST be hex for Zoom!
         const encrypted = crypto
             .createHmac("sha256", SECRET)
             .update(plainToken)
-            .digest("base64");
+            .digest("hex");   // <<==== changed from base64 to hex
 
         return res.json({
             plainToken,
