@@ -1,72 +1,66 @@
-require('dotenv').config()
-const express = require('express')
-const bodyParser = require('body-parser')
-const crypto = require('crypto')
+require("dotenv").config();
+const express = require("express");
+const crypto = require("crypto");
 
-const app = express()
-const port = process.env.PORT || 4000
+const app = express();
 
-app.use(bodyParser.json())
-
-app.get('/', (req, res) => {
-  res.status(200)
-  res.send(`Zoom Webhook sample successfully running. Set this URL with the /webhook path as your apps Event notification endpoint URL. https://github.com/zoom/webhook-sample`)
-})
-
-app.post('/webhook', (req, res) => {
-
-  var response
-
-  console.log(req.headers)
-  console.log(req.body)
-
-  // construct the message string
-  const message = `v0:${req.headers['x-zm-request-timestamp']}:${JSON.stringify(req.body)}`
-
-  const hashForVerify = crypto.createHmac('sha256', process.env.ZOOM_WEBHOOK_SECRET_TOKEN).update(message).digest('hex')
-
-  // hash the message string with your Webhook Secret Token and prepend the version semantic
-  const signature = `v0=${hashForVerify}`
-
-  // you validating the request came from Zoom https://marketplace.zoom.us/docs/api-reference/webhook-reference#notification-structure
-  if (req.headers['x-zm-signature'] === signature) {
-
-    // Zoom validating you control the webhook endpoint https://marketplace.zoom.us/docs/api-reference/webhook-reference#validate-webhook-endpoint
-    if(req.body.event === 'endpoint.url_validation') {
-      const hashForValidate = crypto.createHmac('sha256', process.env.ZOOM_WEBHOOK_SECRET_TOKEN).update(req.body.payload.plainToken).digest('hex')
-
-      response = {
-        message: {
-          plainToken: req.body.payload.plainToken,
-          encryptedToken: hashForValidate
-        },
-        status: 200
-      }
-
-      console.log(response.message)
-
-      res.status(response.status)
-      res.json(response.message)
-    } else {
-      response = { message: 'Authorized request to Zoom Webhook sample.', status: 200 }
-
-      console.log(response.message)
-
-      res.status(response.status)
-      res.json(response)
-
-      // business logic here, example make API request to Zoom or 3rd party
-
-    }
-  } else {
-
-    response = { message: 'Unauthorized request to Zoom Webhook sample.', status: 401 }
-
-    console.log(response.message)
-
-    res.status(response.status)
-    res.json(response)
+// REQUIRED: collect raw body for signature validation
+app.use(express.json({
+  verify: (req, res, buf) => {
+    req.rawBody = buf.toString(); // store raw body
   }
-})
+}));
 
-app.listen(port, () => console.log(`Zoom Webhook sample listening on port ${port}!`))
+const SECRET = process.env.ZOOM_WEBHOOK_SECRET_TOKEN;
+
+// Root test
+app.get("/", (req, res) => {
+  res.send("Zoom Webhook is running");
+});
+
+// MAIN WEBHOOK
+app.post("/webhook", (req, res) => {
+  const event = req.body.event;
+
+  // PHASE 1 — URL VALIDATION (NO SIGNATURE CHECK)
+  if (event === "endpoint.url_validation") {
+    const plainToken = req.body.payload.plainToken;
+
+    const encryptedToken = crypto
+      .createHmac("sha256", SECRET)
+      .update(plainToken)
+      .digest("hex");
+
+    return res.status(200).json({
+      plainToken,
+      encryptedToken
+    });
+  }
+
+  // PHASE 2 — SIGNATURE VALIDATION (AFTER ACTIVATION)
+  const timestamp = req.headers["x-zm-request-timestamp"];
+  const signature = req.headers["x-zm-signature"];
+
+  const message = `v0:${timestamp}:${req.rawBody}`;
+
+  const hash = crypto
+    .createHmac("sha256", SECRET)
+    .update(message)
+    .digest("hex");
+
+  const expectedSignature = `v0=${hash}`;
+
+  if (expectedSignature !== signature) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  // VALID WEBHOOK EVENT
+  res.status(200).json({ message: "OK" });
+});
+
+// Keep server alive (fix for Render free tier cold start)
+app.get("/ping", (req, res) => res.send("alive"));
+
+app.listen(process.env.PORT || 4000, () =>
+  console.log("Zoom Webhook server running")
+);
